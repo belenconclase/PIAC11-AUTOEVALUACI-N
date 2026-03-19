@@ -1,0 +1,410 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, query, doc } from 'firebase/firestore';
+
+// Configuración de Firebase
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+const rawQuestions = [
+    { q: "Señala la afirmación incorrecta en relación a los estados financieros:", a: "Con los ingresos y los gastos se elabora el balance.", options: ["Con los ingresos y los gastos se elabora la cuenta de Pérdidas y ganancias.", "Con los elementos patrimoniales se elabora el balance.", "Con los ingresos y los gastos se elabora el balance.", "Ninguna de las respuestas anteriores es correcta."] },
+    { q: "¿Qué documentos integran preceptivamente las cuentas anuales?", a: "La cuenta de Pérdidas y ganancias.", options: ["El balance de comprobación.", "El libro Mayor.", "La cuenta de Pérdidas y ganancias.", "Todas las anteriores son correctas."] },
+    { q: "En relación a los principios contables del PGC, señala la opción correcta:", a: "El principio de uniformidad establece que un criterio debe mantenerse en el tiempo si no se alteran los supuestos.", options: ["El principio de prudencia indica que los ingresos se registran cuando ocurren con independencia de la fecha de cobro.", "El principio de uniformidad establece que un criterio debe mantenerse en el tiempo si no se alteran los supuestos.", "El principio de devengo implica que solo se contabilizan los beneficios obtenidos hasta el cierre.", "Todas las anteriores son correctas."] },
+    { q: "Respecto a las cualidades de la información de las cuentas anuales, señala la INCORRECTA:", a: "Debe ser irrelevante.", options: ["Debe ser irrelevante.", "Debe ser útil.", "Debe ser fiable.", "Debe ser comprensible."] },
+    { q: "Sobre la estructura del Plan General de Contabilidad (PGC), señala la afirmación correcta:", a: "El PGC se compone de cinco partes, siendo algunas de ellas de aplicación voluntaria.", options: ["El PGC se compone de cuatro partes, todas ellas de obligado cumplimiento.", "El PGC se compone de cinco partes, siendo algunas de ellas de aplicación voluntaria.", "El PGC se compone de cinco partes, todas ellas de obligado cumplimiento.", "El PGC se compone de cuatro partes, pero no todas ellas de obligado cumplimiento."] },
+    { q: "¿Cuál de los siguientes enunciados se define como un principio contable?", a: "Empresa en funcionamiento.", options: ["La integridad.", "La relevancia.", "La comparabilidad.", "Empresa en funcionamiento."] },
+    { q: "El cuadro de cuentas del PGC para PYMES se estructura en:", a: "Siete grupos.", options: ["Ocho grupos.", "Siete grupos.", "Dos grupos de cuentas patrimoniales.", "Cinco grupos de cuentas de gestión."] },
+    { q: "Dentro del cuadro de cuentas del PGC, el grupo 5 hace referencia a:", a: "Cuentas financieras.", options: ["Cuentas financieras.", "Existencias.", "Acreedores y deudores comerciales.", "Financiación básica."] },
+    { q: "Un asiento contable que registra dos cuentas en el Debe y una en el Haber se clasifica como:", a: "Compuesto.", options: ["Mixto.", "Simple.", "Compuesto.", "Ninguna es correcta."] },
+    { q: "Un asiento contable que registra dos cuentas en el Debe y dos en el Haber se clasifica como:", a: "Compuesto.", options: ["Mixto.", "Simple.", "Compuesto.", "Ninguna es correcta."] },
+    { q: "Indique la afirmación verdadera respecto a los registros contables:", a: "Cada anotación registrada en una cuenta en el Libro Diario se denomina apunte.", options: ["En el libro Mayor se introducen cronológicamente las operaciones contables de forma inicial.", "Cada anotación registrada en una cuenta en el Libro Diario se denomina apunte.", "En el libro Mayor solo aparecen reflejadas las cuentas de carácter patrimonial.", "Ninguna es correcta."] },
+    { q: "La cuota de la Seguridad Social a cargo de la entidad por sus empleados se registra en la cuenta:", a: "(642) Seguridad Social a cargo de la empresa.", options: ["(623) Servicios de profesionales independientes.", "(642) Seguridad Social a cargo de la empresa.", "(640) Sueldos y salarios.", "(641) Indemnizaciones."] }
+];
+
+export default function App() {
+    const [user, setUser] = useState(null);
+    const [allResults, setAllResults] = useState([]);
+    const [gameState, setGameState] = useState('start');
+    const [playerName, setPlayerName] = useState('');
+    const [shuffledQuestions, setShuffledQuestions] = useState([]);
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [score, setScore] = useState(0);
+    const [hits, setHits] = useState(0);
+    const [streak, setStreak] = useState(0); // Racha actual
+    const [timeLeft, setTimeLeft] = useState(20);
+    const [selectedChoice, setSelectedChoice] = useState(null);
+    const [powerUps, setPowerUps] = useState({ double: false, freeze: false, skip: false });
+    const [activeEffects, setActiveEffects] = useState({ isDouble: false, isFrozen: false });
+    const [logoClicks, setLogoClicks] = useState(0);
+    const [feedback, setFeedback] = useState(null); // Para mostrar "Racha" o "Penalización"
+
+    const timerRef = useRef(null);
+
+    useEffect(() => {
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, setUser);
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        if (!user) return;
+        const q = collection(db, 'artifacts', appId, 'public', 'data', 'ranking');
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const sorted = data.sort((a, b) => new Date(b.date) - new Date(a.date));
+            setAllResults(sorted);
+        }, (err) => console.error(err));
+        return () => unsubscribe();
+    }, [user]);
+
+    const handleLogoClick = () => {
+        const newClicks = logoClicks + 1;
+        setLogoClicks(newClicks);
+        if (newClicks >= 5) {
+            setGameState('admin');
+            setLogoClicks(0);
+        }
+        setTimeout(() => setLogoClicks(0), 3000);
+    };
+
+    useEffect(() => {
+        if (gameState === 'playing' && !activeEffects.isFrozen && selectedChoice === null) {
+            timerRef.current = setInterval(() => {
+                setTimeLeft((prev) => {
+                    if (prev <= 1) {
+                        handleAnswer(null);
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }, 1000);
+        }
+        return () => clearInterval(timerRef.current);
+    }, [gameState, activeEffects.isFrozen, selectedChoice, currentIndex]);
+
+    const startGame = () => {
+        if (!playerName.trim()) return;
+        const processed = [...rawQuestions]
+            .sort(() => Math.random() - 0.5)
+            .map(q => ({
+                ...q,
+                shuffledOptions: [...q.options].sort(() => Math.random() - 0.5)
+            }));
+        setShuffledQuestions(processed);
+        setScore(0);
+        setHits(0);
+        setStreak(0);
+        setCurrentIndex(0);
+        setGameState('playing');
+        setTimeLeft(20);
+        setPowerUps({ double: false, freeze: false, skip: false });
+        setActiveEffects({ isDouble: false, isFrozen: false });
+        setSelectedChoice(null);
+    };
+
+    const handleAnswer = (choiceText) => {
+        if (selectedChoice !== null) return;
+        setSelectedChoice(choiceText);
+        clearInterval(timerRef.current);
+        
+        const currentQ = shuffledQuestions[currentIndex];
+        const isCorrect = choiceText === currentQ.a;
+        
+        let pointsEarned = 0;
+        let currentFeedback = null;
+
+        if (isCorrect) {
+            pointsEarned = 100;
+            const newStreak = streak + 1;
+            setStreak(newStreak);
+            setHits(prev => prev + 1);
+
+            // Bonus por racha de 3
+            if (newStreak % 3 === 0) {
+                pointsEarned += 150;
+                currentFeedback = "¡Racha de 3! 🔥 +150 Bonus";
+            }
+
+            if (activeEffects.isDouble) pointsEarned *= 2;
+        } else {
+            // Penalización por error
+            pointsEarned = -50;
+            setStreak(0); // Romper racha
+            currentFeedback = "Error: -50 puntos ⚠️";
+        }
+
+        setScore(prev => prev + pointsEarned);
+        setFeedback(currentFeedback);
+
+        setTimeout(() => {
+            setFeedback(null);
+            const nextIndex = currentIndex + 1;
+            if (nextIndex < shuffledQuestions.length) {
+                setCurrentIndex(nextIndex);
+                setSelectedChoice(null);
+                setTimeLeft(20);
+                setActiveEffects({ isDouble: false, isFrozen: false });
+            } else {
+                finishGame(score + pointsEarned, hits + (isCorrect ? 1 : 0));
+            }
+        }, 1500);
+    };
+
+    const finishGame = async (finalScore, finalHits) => {
+        setGameState('results');
+        if (user) {
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'ranking'), {
+                    name: playerName,
+                    score: finalScore,
+                    hits: finalHits,
+                    date: new Date().toISOString()
+                });
+            } catch (e) { console.error(e); }
+        }
+    };
+
+    const usePowerUp = (type) => {
+        if (powerUps[type] || selectedChoice !== null) return;
+        setPowerUps(prev => ({ ...prev, [type]: true }));
+        if (type === 'double') setActiveEffects(prev => ({ ...prev, isDouble: true }));
+        if (type === 'freeze') setActiveEffects(prev => ({ ...prev, isFrozen: true }));
+        if (type === 'skip') {
+            const nextIndex = currentIndex + 1;
+            if (nextIndex < shuffledQuestions.length) {
+                setCurrentIndex(nextIndex);
+                setTimeLeft(20);
+                setSelectedChoice(null);
+                setStreak(0); // Saltar no cuenta para racha
+                setActiveEffects({ isDouble: false, isFrozen: false });
+            } else {
+                finishGame(score, hits);
+            }
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 text-slate-800 font-sans">
+            <div className="w-full max-w-xl bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
+                
+                {/* HEADER */}
+                <div className="bg-gradient-to-r from-blue-900 to-indigo-800 p-6 text-white flex justify-between items-center relative overflow-hidden">
+                    <div className="flex items-center gap-3 cursor-pointer select-none z-10" onClick={handleLogoClick}>
+                        <div className="bg-white text-blue-900 w-10 h-10 flex items-center justify-center rounded-xl font-black text-xl shadow-lg">BC</div>
+                        <div>
+                            <h1 className="font-bold text-lg leading-tight tracking-tight">Evaluación PIAC</h1>
+                            <p className="text-[10px] opacity-80 uppercase tracking-widest font-black">IES Bajo Cinca</p>
+                        </div>
+                    </div>
+                    <div className="text-right z-10">
+                        <span className={`text-2xl font-black transition-all ${score < 0 ? 'text-red-300' : 'text-white'}`}>
+                            {score}
+                        </span>
+                        <p className="text-[9px] uppercase opacity-70 font-black tracking-widest">Puntos</p>
+                    </div>
+                    {/* Decoración fondo header */}
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-10 -mt-10 blur-2xl"></div>
+                </div>
+
+                {/* FEEDBACK TEMPORAL (Rachas / Penas) */}
+                <div className="h-2 bg-slate-50 relative">
+                    {feedback && (
+                        <div className="absolute top-2 left-0 right-0 text-center z-20">
+                            <span className={`px-4 py-1 rounded-full text-xs font-black shadow-lg animate-bounce inline-block ${feedback.includes('Racha') ? 'bg-orange-500 text-white' : 'bg-red-500 text-white'}`}>
+                                {feedback}
+                            </span>
+                        </div>
+                    )}
+                </div>
+
+                {/* VISTA DE PROFESOR */}
+                {gameState === 'admin' && (
+                    <div className="p-8 animate-in slide-in-from-bottom duration-500">
+                        <div className="flex justify-between items-center mb-6 border-b pb-4">
+                            <h2 className="text-xl font-black text-slate-800">EXPEDIENTES ACADÉMICOS</h2>
+                            <button onClick={() => setGameState('start')} className="text-xs bg-slate-800 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-700 transition-colors uppercase tracking-widest">Cerrar</button>
+                        </div>
+                        <div className="space-y-3 max-h-[450px] overflow-y-auto pr-2 custom-scrollbar">
+                            {allResults.length === 0 ? (
+                                <p className="text-center py-12 text-slate-400 font-medium italic">No se han registrado evaluaciones todavía.</p>
+                            ) : (
+                                allResults.map((res) => (
+                                    <div key={res.id} className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:border-blue-200 transition-all">
+                                        <div>
+                                            <p className="font-black text-slate-800 uppercase text-sm tracking-tight">{res.name}</p>
+                                            <p className="text-[10px] text-slate-400 font-bold">{new Date(res.date).toLocaleDateString()} · {new Date(res.date).toLocaleTimeString()}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className={`font-black text-lg ${res.score >= 500 ? 'text-emerald-600' : res.score < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                                                {res.score} <span className="text-[10px]">PTS</span>
+                                            </p>
+                                            <p className="text-[10px] font-bold text-slate-500 italic">{res.hits} / {rawQuestions.length} aciertos</p>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* PANTALLA INICIO */}
+                {gameState === 'start' && (
+                    <div className="p-8 text-center animate-in fade-in duration-500">
+                        <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center mx-auto mb-6 text-3xl shadow-inner border border-blue-100">
+                            📓
+                        </div>
+                        <h2 className="text-2xl font-black mb-3 text-slate-800 uppercase tracking-tight">Evaluación Continua</h2>
+                        <p className="text-slate-500 mb-8 text-sm leading-relaxed max-w-sm mx-auto">
+                            Proceso de autoevaluación de PIAC. 
+                            <br/><span className="text-emerald-600 font-bold">Acierto: +100</span> | <span className="text-red-500 font-bold">Error: -50</span>
+                            <br/><span className="text-orange-500 font-bold">Racha x3: +150 Bonus</span>
+                        </p>
+                        
+                        <div className="space-y-4 max-w-md mx-auto">
+                            <input 
+                                type="text" 
+                                value={playerName}
+                                onChange={(e) => setPlayerName(e.target.value)}
+                                placeholder="Nombre y Apellidos del alumno..." 
+                                className="w-full p-5 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none transition-all text-center font-bold text-lg bg-slate-50 shadow-inner"
+                            />
+
+                            <button onClick={startGame} className="w-full bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all text-lg tracking-widest uppercase">
+                                INICIAR EXAMEN
+                            </button>
+                        </div>
+
+                        {allResults.length > 0 && (
+                            <div className="mt-12 bg-slate-50/50 p-6 rounded-3xl border border-slate-100">
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-4">🏆 Cuadro de Honor</h3>
+                                <div className="space-y-2">
+                                    {allResults.sort((a,b) => b.score - a.score).slice(0, 3).map((r, i) => (
+                                        <div key={i} className="flex justify-between items-center bg-white px-4 py-3 rounded-2xl border border-slate-100 shadow-sm">
+                                            <div className="flex items-center gap-3">
+                                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${i===0?'bg-yellow-400 text-yellow-900':i===1?'bg-slate-300 text-slate-700':'bg-orange-300 text-orange-900'}`}>{i+1}</span>
+                                                <span className="font-bold text-slate-700 text-sm truncate max-w-[120px]">{r.name}</span>
+                                            </div>
+                                            <span className="font-black text-blue-700 text-sm">{r.score}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* PANTALLA JUEGO */}
+                {gameState === 'playing' && (
+                    <div className="p-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <div className="flex items-center gap-2">
+                                <span className="bg-indigo-600 text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">
+                                    Ítem {currentIndex + 1} / {shuffledQuestions.length}
+                                </span>
+                                {streak >= 1 && (
+                                    <span className="bg-orange-100 text-orange-600 px-2 py-1 rounded-lg text-[10px] font-black animate-pulse">
+                                        RACHA: {streak} 🔥
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className={`font-mono font-bold ${timeLeft < 5 ? 'text-red-500 animate-pulse' : 'text-slate-400'}`}>
+                                    {activeEffects.isFrozen ? "❄️" : `${timeLeft}s`}
+                                </span>
+                                <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className={`h-full transition-all duration-1000 ${timeLeft < 5 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${(timeLeft / 20) * 100}%` }}></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <h3 className="text-lg font-bold text-slate-800 mb-8 min-h-[70px] leading-tight">
+                            {shuffledQuestions[currentIndex]?.q}
+                        </h3>
+
+                        <div className="space-y-3 mb-8">
+                            {shuffledQuestions[currentIndex]?.shuffledOptions.map((text, idx) => {
+                                const isCorrect = text === shuffledQuestions[currentIndex].a;
+                                const isSelected = selectedChoice === text;
+                                let btnClass = "w-full text-left p-5 rounded-2xl border-2 transition-all flex items-start gap-4 text-sm font-semibold ";
+                                
+                                if (selectedChoice === null) btnClass += "border-slate-50 hover:border-blue-300 hover:bg-blue-50 text-slate-600";
+                                else if (isCorrect) btnClass += "border-emerald-500 bg-emerald-50 text-emerald-800";
+                                else if (isSelected) btnClass += "border-red-500 bg-red-50 text-red-800";
+                                else btnClass += "border-slate-50 opacity-40 shadow-none";
+
+                                return (
+                                    <button key={idx} disabled={selectedChoice !== null} onClick={() => handleAnswer(text)} className={`${btnClass} ${selectedChoice === null ? 'shadow-sm active:scale-[0.98]' : ''}`}>
+                                        <div className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                            {String.fromCharCode(65 + idx)}
+                                        </div>
+                                        <span className="leading-snug">{text}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {/* POWER-UPS */}
+                        <div className="grid grid-cols-3 gap-4 pt-6 border-t border-slate-100">
+                            <button onClick={() => usePowerUp('double')} disabled={powerUps.double || selectedChoice !== null} className={`group flex flex-col items-center p-3 rounded-2xl border-2 transition-all ${powerUps.double ? 'bg-slate-50 opacity-20 border-slate-100' : 'border-orange-100 hover:bg-orange-50 hover:border-orange-300'}`}>
+                                <span className="text-xl group-hover:scale-110 transition-transform">🚀</span>
+                                <span className="text-[8px] font-black uppercase mt-1 text-orange-600 tracking-widest">Doble Ptos</span>
+                            </button>
+                            <button onClick={() => usePowerUp('freeze')} disabled={powerUps.freeze || selectedChoice !== null} className={`group flex flex-col items-center p-3 rounded-2xl border-2 transition-all ${powerUps.freeze ? 'bg-slate-50 opacity-20 border-slate-100' : 'border-cyan-100 hover:bg-cyan-50 hover:border-cyan-300'}`}>
+                                <span className="text-xl group-hover:rotate-12 transition-transform">❄️</span>
+                                <span className="text-[8px] font-black uppercase mt-1 text-cyan-600 tracking-widest">Congelar</span>
+                            </button>
+                            <button onClick={() => usePowerUp('skip')} disabled={powerUps.skip || selectedChoice !== null} className={`group flex flex-col items-center p-3 rounded-2xl border-2 transition-all ${powerUps.skip ? 'bg-slate-50 opacity-20 border-slate-100' : 'border-purple-100 hover:bg-purple-50 hover:border-purple-300'}`}>
+                                <span className="text-xl group-hover:rotate-180 transition-all duration-500">🔄</span>
+                                <span className="text-[8px] font-black uppercase mt-1 text-purple-600 tracking-widest">Saltar</span>
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* RESULTADOS FINALES */}
+                {gameState === 'results' && (
+                    <div className="p-8 text-center animate-in zoom-in duration-300">
+                        <div className="text-6xl mb-4">📈</div>
+                        <h2 className="text-3xl font-black text-slate-800 mb-2 uppercase tracking-tight">Evaluación Finalizada</h2>
+                        <p className="text-slate-500 mb-8 font-black uppercase text-[10px] tracking-widest border-b pb-4">Informe de rendimiento de {playerName}</p>
+                        
+                        <div className="space-y-4 mb-10">
+                            <div className="flex gap-4">
+                                <div className="flex-1 bg-slate-900 text-white p-6 rounded-3xl shadow-xl shadow-slate-200">
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1 text-left">Puntuación Final</p>
+                                    <p className="text-4xl font-black text-left">{score}</p>
+                                </div>
+                                <div className="flex-1 bg-indigo-50 p-6 rounded-3xl border border-indigo-100">
+                                    <p className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-1 text-left">Rendimiento</p>
+                                    <p className="text-4xl font-black text-indigo-700 text-left">{Math.round((hits/rawQuestions.length)*100)}%</p>
+                                </div>
+                            </div>
+                            <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 flex justify-between items-center">
+                                <div>
+                                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-[0.2em] mb-1 text-left">Aciertos Netos</p>
+                                    <p className="text-3xl font-black text-emerald-700 text-left">{hits} / {rawQuestions.length}</p>
+                                </div>
+                                <span className="text-4xl">🎯</span>
+                            </div>
+                        </div>
+
+                        <button onClick={() => window.location.reload()} className="w-full bg-slate-800 text-white font-black py-5 rounded-2xl hover:bg-black transition-all shadow-xl uppercase tracking-widest">
+                            Reiniciar Evaluación
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
