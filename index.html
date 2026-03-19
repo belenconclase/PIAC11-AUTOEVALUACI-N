@@ -3,14 +3,14 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, query, doc } from 'firebase/firestore';
 
-// Configuración de Firebase - Proporcionada por el entorno
+// Configuración de Firebase
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// Banco de preguntas actualizado con redacción académica
+// Banco de preguntas
 const rawQuestions = [
     { q: "Señala la afirmación incorrecta en relación a los estados financieros:", a: "Con los ingresos y los gastos se elabora el balance.", options: ["Con los ingresos y los gastos se elabora la cuenta de Pérdidas y ganancias.", "Con los elementos patrimoniales se elabora el balance.", "Con los ingresos y los gastos se elabora el balance.", "Ninguna de las respuestas anteriores es correcta."] },
     { q: "¿Qué documentos integran preceptivamente las cuentas anuales?", a: "La cuenta de Pérdidas y ganancias.", options: ["El balance de comprobación.", "El libro Mayor.", "La cuenta de Pérdidas y ganancias.", "Todas las anteriores son correctas."] },
@@ -45,7 +45,7 @@ export default function App() {
 
     const timerRef = useRef(null);
 
-    // Inicialización de autenticación
+    // Auth
     useEffect(() => {
         const initAuth = async () => {
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -59,7 +59,7 @@ export default function App() {
         return () => unsubscribe();
     }, []);
 
-    // Escuchar cambios en la base de datos (Ranking)
+    // Firestore Ranking
     useEffect(() => {
         if (!user) return;
         const q = collection(db, 'artifacts', appId, 'public', 'data', 'ranking');
@@ -67,22 +67,11 @@ export default function App() {
             const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             const sorted = data.sort((a, b) => new Date(b.date) - new Date(a.date));
             setAllResults(sorted);
-        }, (err) => console.error("Error Firestore:", err));
+        }, (err) => console.error(err));
         return () => unsubscribe();
     }, [user]);
 
-    // Lógica para entrar al panel de profesor (5 clics en logo)
-    const handleLogoClick = () => {
-        const newClicks = logoClicks + 1;
-        setLogoClicks(newClicks);
-        if (newClicks >= 5) {
-            setGameState('admin');
-            setLogoClicks(0);
-        }
-        setTimeout(() => setLogoClicks(0), 3000);
-    };
-
-    // Temporizador
+    // Timer logic
     useEffect(() => {
         if (gameState === 'playing' && !activeEffects.isFrozen && selectedChoice === null) {
             timerRef.current = setInterval(() => {
@@ -97,6 +86,16 @@ export default function App() {
         }
         return () => clearInterval(timerRef.current);
     }, [gameState, activeEffects.isFrozen, selectedChoice, currentIndex]);
+
+    const handleLogoClick = () => {
+        const newClicks = logoClicks + 1;
+        setLogoClicks(newClicks);
+        if (newClicks >= 5) {
+            setGameState('admin');
+            setLogoClicks(0);
+        }
+        setTimeout(() => setLogoClicks(0), 3000);
+    };
 
     const startGame = () => {
         if (!playerName.trim()) return;
@@ -125,41 +124,34 @@ export default function App() {
         
         const currentQ = shuffledQuestions[currentIndex];
         const isCorrect = choiceText === currentQ.a;
-        
-        let pointsEarned = 0;
-        let currentFeedback = null;
+        let points = isCorrect ? 100 : -50;
+        let currentFeedback = isCorrect ? "¡Correcto!" : "Error -50";
 
         if (isCorrect) {
-            pointsEarned = 100;
             const newStreak = streak + 1;
             setStreak(newStreak);
-            setHits(prev => prev + 1);
-
+            setHits(h => h + 1);
             if (newStreak % 3 === 0) {
-                pointsEarned += 150;
-                currentFeedback = "¡Racha de 3! 🔥 +150 Bonus";
+                points += 150;
+                currentFeedback = "¡Racha de 3! +150 Bonus 🔥";
             }
-
-            if (activeEffects.isDouble) pointsEarned *= 2;
+            if (activeEffects.isDouble) points *= 2;
         } else {
-            pointsEarned = -50;
             setStreak(0);
-            currentFeedback = "Incorrecto: -50 puntos ⚠️";
         }
 
-        setScore(prev => prev + pointsEarned);
+        setScore(s => s + points);
         setFeedback(currentFeedback);
 
         setTimeout(() => {
             setFeedback(null);
-            const nextIndex = currentIndex + 1;
-            if (nextIndex < shuffledQuestions.length) {
-                setCurrentIndex(nextIndex);
+            if (currentIndex + 1 < shuffledQuestions.length) {
+                setCurrentIndex(currentIndex + 1);
                 setSelectedChoice(null);
                 setTimeLeft(20);
                 setActiveEffects({ isDouble: false, isFrozen: false });
             } else {
-                finishGame(score + pointsEarned, hits + (isCorrect ? 1 : 0));
+                finishGame(score + points, hits + (isCorrect ? 1 : 0));
             }
         }, 1500);
     };
@@ -174,23 +166,20 @@ export default function App() {
                     hits: finalHits,
                     date: new Date().toISOString()
                 });
-            } catch (e) { console.error("Error guardando:", e); }
+            } catch (e) { console.error(e); }
         }
     };
 
     const usePowerUp = (type) => {
         if (powerUps[type] || selectedChoice !== null) return;
-        setPowerUps(prev => ({ ...prev, [type]: true }));
-        if (type === 'double') setActiveEffects(prev => ({ ...prev, isDouble: true }));
-        if (type === 'freeze') setActiveEffects(prev => ({ ...prev, isFrozen: true }));
+        setPowerUps(p => ({ ...p, [type]: true }));
+        if (type === 'double') setActiveEffects(e => ({ ...e, isDouble: true }));
+        if (type === 'freeze') setActiveEffects(e => ({ ...e, isFrozen: true }));
         if (type === 'skip') {
-            const nextIndex = currentIndex + 1;
-            if (nextIndex < shuffledQuestions.length) {
-                setCurrentIndex(nextIndex);
+            if (currentIndex + 1 < shuffledQuestions.length) {
+                setCurrentIndex(currentIndex + 1);
                 setTimeLeft(20);
                 setSelectedChoice(null);
-                setStreak(0);
-                setActiveEffects({ isDouble: false, isFrozen: false });
             } else {
                 finishGame(score, hits);
             }
@@ -198,204 +187,153 @@ export default function App() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 text-slate-800 font-sans">
-            <div className="w-full max-w-xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans text-slate-800">
+            <div className="w-full max-w-lg bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
                 
-                {/* CABECERA CON LOGOTIPO INSTITUCIONAL */}
-                <div className="bg-white p-6 flex justify-between items-center border-b border-slate-100 relative">
-                    <div 
-                        className="flex items-center gap-4 cursor-pointer select-none z-10" 
-                        onClick={handleLogoClick}
-                    >
+                {/* Header Institucional */}
+                <div className="p-6 bg-white border-b border-gray-100 flex justify-between items-center">
+                    <div onClick={handleLogoClick} className="flex items-center gap-3 cursor-pointer">
                         <div className="flex flex-col">
-                           <div className="flex items-center gap-2">
-                                <div className="bg-blue-900 text-white w-8 h-8 flex items-center justify-center rounded-lg font-black text-sm">BC</div>
-                                <h1 className="font-black text-xl text-blue-900 tracking-tighter">I.E.S. Bajo Cinca</h1>
-                           </div>
-                           <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-[0.2em] mt-1">Departamento Administrativo</p>
+                            <h1 className="font-black text-blue-900 text-lg leading-none">I.E.S. Bajo Cinca</h1>
+                            <span className="text-[10px] font-bold text-green-700 uppercase tracking-widest">Fraga · Administrativo</span>
                         </div>
                     </div>
-                    <div className="text-right z-10">
-                        <div className={`text-2xl font-black ${score < 0 ? 'text-red-600' : 'text-blue-900'}`}>
-                            {score}
-                        </div>
-                        <p className="text-[9px] uppercase text-slate-400 font-black tracking-widest">Puntos Totales</p>
+                    <div className="text-right">
+                        <p className="text-[9px] font-black text-gray-400 uppercase">Puntos</p>
+                        <p className={`text-2xl font-black ${score < 0 ? 'text-red-500' : 'text-blue-900'}`}>{score}</p>
                     </div>
                 </div>
 
-                {/* BARRA DE FEEDBACK */}
-                <div className="h-1 bg-slate-50 relative">
-                    {feedback && (
-                        <div className="absolute top-2 left-0 right-0 text-center z-20">
-                            <span className={`px-4 py-1 rounded-full text-[10px] font-black shadow-lg animate-bounce inline-block ${feedback.includes('Racha') ? 'bg-orange-500 text-white' : 'bg-red-500 text-white'}`}>
-                                {feedback}
-                            </span>
+                {/* Contenido Principal */}
+                <div className="p-8">
+                    {gameState === 'start' && (
+                        <div className="text-center animate-in fade-in duration-500">
+                            <div className="w-20 h-20 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-3xl">📝</div>
+                            <h2 className="text-xl font-black mb-2 uppercase tracking-tight">Examen de PIAC</h2>
+                            <p className="text-gray-500 text-xs mb-8">Procesos integrales de actividad comercial</p>
+                            
+                            <input 
+                                type="text"
+                                placeholder="Escribe tu nombre completo..."
+                                className="w-full p-4 rounded-xl border-2 border-gray-100 mb-4 focus:border-blue-500 outline-none font-bold transition-all"
+                                value={playerName}
+                                onChange={(e) => setPlayerName(e.target.value)}
+                            />
+                            <button 
+                                onClick={startGame}
+                                className="w-full bg-blue-900 text-white font-black py-4 rounded-xl shadow-lg shadow-blue-100 hover:scale-[1.02] active:scale-95 transition-all uppercase text-sm tracking-widest"
+                            >
+                                Empezar Evaluación
+                            </button>
+                        </div>
+                    )}
+
+                    {gameState === 'playing' && (
+                        <div className="animate-in slide-in-from-right duration-300">
+                            <div className="flex justify-between items-center mb-6">
+                                <span className="text-[10px] font-black bg-gray-100 px-3 py-1 rounded-full uppercase text-gray-500">
+                                    Pregunta {currentIndex + 1} / {shuffledQuestions.length}
+                                </span>
+                                <span className={`font-mono font-black ${timeLeft < 5 ? 'text-red-500 animate-pulse' : 'text-blue-900'}`}>
+                                    {activeEffects.isFrozen ? "PAUSA ❄️" : `${timeLeft}s`}
+                                </span>
+                            </div>
+
+                            <h3 className="text-lg font-bold mb-8 leading-tight text-slate-700">
+                                {shuffledQuestions[currentIndex].q}
+                            </h3>
+
+                            <div className="space-y-3">
+                                {shuffledQuestions[currentIndex].shuffledOptions.map((opt, i) => {
+                                    const isCorrect = opt === shuffledQuestions[currentIndex].a;
+                                    const isSelected = selectedChoice === opt;
+                                    let style = "w-full text-left p-4 rounded-xl border-2 font-bold text-sm transition-all ";
+                                    
+                                    if (!selectedChoice) style += "border-gray-100 hover:border-blue-400 hover:bg-blue-50";
+                                    else if (isCorrect) style += "border-green-500 bg-green-50 text-green-700";
+                                    else if (isSelected) style += "border-red-500 bg-red-50 text-red-700";
+                                    else style += "opacity-40 border-gray-50";
+
+                                    return (
+                                        <button key={i} onClick={() => handleAnswer(opt)} disabled={!!selectedChoice} className={style}>
+                                            {opt}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Comodines */}
+                            <div className="grid grid-cols-3 gap-3 mt-10 pt-6 border-t border-gray-50">
+                                <button onClick={() => usePowerUp('double')} disabled={powerUps.double} className={`p-3 rounded-xl border text-center ${powerUps.double ? 'opacity-20' : 'bg-orange-50'}`}>
+                                    <span className="block text-lg">x2</span>
+                                    <span className="text-[8px] font-black uppercase text-orange-600">Doble</span>
+                                </button>
+                                <button onClick={() => usePowerUp('freeze')} disabled={powerUps.freeze} className={`p-3 rounded-xl border text-center ${powerUps.freeze ? 'opacity-20' : 'bg-blue-50'}`}>
+                                    <span className="block text-lg">❄️</span>
+                                    <span className="text-[8px] font-black uppercase text-blue-600">Parar</span>
+                                </button>
+                                <button onClick={() => usePowerUp('skip')} disabled={powerUps.skip} className={`p-3 rounded-xl border text-center ${powerUps.skip ? 'opacity-20' : 'bg-purple-50'}`}>
+                                    <span className="block text-lg">⏭️</span>
+                                    <span className="text-[8px] font-black uppercase text-purple-600">Pasar</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {gameState === 'results' && (
+                        <div className="text-center animate-in zoom-in duration-300">
+                            <h2 className="text-2xl font-black text-blue-900 mb-2 uppercase">¡Completado!</h2>
+                            <p className="text-gray-400 text-[10px] font-bold uppercase mb-8">Resultados de {playerName}</p>
+                            
+                            <div className="bg-blue-900 text-white p-8 rounded-3xl mb-6 shadow-xl">
+                                <p className="text-4xl font-black mb-1">{score}</p>
+                                <p className="text-[10px] font-bold uppercase opacity-60">Puntos Finales</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4 mb-10">
+                                <div className="bg-gray-50 p-4 rounded-2xl">
+                                    <p className="text-xl font-black">{hits}</p>
+                                    <p className="text-[9px] font-bold uppercase text-gray-400">Aciertos</p>
+                                </div>
+                                <div className="bg-gray-50 p-4 rounded-2xl">
+                                    <p className="text-xl font-black">{Math.round((hits/rawQuestions.length)*100)}%</p>
+                                    <p className="text-[9px] font-bold uppercase text-gray-400">Eficacia</p>
+                                </div>
+                            </div>
+
+                            <button onClick={() => window.location.reload()} className="w-full py-4 bg-gray-900 text-white rounded-xl font-black uppercase text-xs tracking-widest">
+                                Volver al inicio
+                            </button>
+                        </div>
+                    )}
+
+                    {gameState === 'admin' && (
+                        <div className="animate-in slide-in-from-bottom duration-500">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="font-black uppercase text-sm">Registro de Notas</h2>
+                                <button onClick={() => setGameState('start')} className="text-[10px] font-bold bg-gray-100 px-3 py-1 rounded-lg">Salir</button>
+                            </div>
+                            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                                {allResults.map(res => (
+                                    <div key={res.id} className="p-3 bg-gray-50 rounded-xl flex justify-between items-center border border-gray-100">
+                                        <span className="font-bold text-xs uppercase">{res.name}</span>
+                                        <div className="text-right">
+                                            <p className="font-black text-blue-900 text-sm">{res.score} pts</p>
+                                            <p className="text-[8px] font-bold text-gray-400 uppercase">{new Date(res.date).toLocaleDateString()}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
 
-                {/* VISTA DE PROFESORA (ADMIN) */}
-                {gameState === 'admin' && (
-                    <div className="p-8 animate-in slide-in-from-bottom duration-500">
-                        <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
-                            <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight">Registro de Calificaciones</h2>
-                            <button onClick={() => setGameState('start')} className="text-[10px] bg-slate-800 text-white px-4 py-2 rounded-xl font-black hover:bg-slate-700 transition-all uppercase">Cerrar</button>
+                {/* Feedback flotante */}
+                {feedback && (
+                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                        <div className="bg-white px-6 py-3 rounded-2xl shadow-2xl border-2 border-blue-900 animate-bounce">
+                            <p className="font-black text-blue-900 uppercase text-xs">{feedback}</p>
                         </div>
-                        <div className="space-y-3 max-h-[450px] overflow-y-auto pr-2">
-                            {allResults.length === 0 ? (
-                                <p className="text-center py-12 text-slate-400 italic">No hay registros aún.</p>
-                            ) : (
-                                allResults.map((res) => (
-                                    <div key={res.id} className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                                        <div>
-                                            <p className="font-black text-slate-800 uppercase text-xs">{res.name}</p>
-                                            <p className="text-[9px] text-slate-400 font-bold uppercase">{new Date(res.date).toLocaleString('es-ES')}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className={`font-black text-md ${res.score >= 500 ? 'text-emerald-600' : res.score < 0 ? 'text-red-600' : 'text-blue-900'}`}>
-                                                {res.score} PTS
-                                            </p>
-                                            <p className="text-[9px] font-bold text-slate-500 uppercase">{res.hits} Aciertos</p>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {/* PANTALLA INICIAL */}
-                {gameState === 'start' && (
-                    <div className="p-10 text-center animate-in fade-in duration-500">
-                        <div className="mb-8">
-                           <span className="text-5xl block mb-4">📝</span>
-                           <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Examen de PIAC</h2>
-                           <div className="h-1 w-12 bg-blue-900 mx-auto mt-2 rounded-full"></div>
-                        </div>
-
-                        <div className="bg-blue-50/50 rounded-3xl p-6 mb-10 border border-blue-100">
-                            <p className="text-xs font-bold text-blue-800 mb-2 uppercase tracking-widest">Reglas del Ejercicio</p>
-                            <div className="grid grid-cols-2 gap-4 text-[10px] font-bold uppercase text-slate-500">
-                                <div className="bg-white p-3 rounded-xl border border-blue-50 shadow-sm">
-                                    <span className="text-emerald-600 block text-sm mb-1">+100</span> Acierto
-                                </div>
-                                <div className="bg-white p-3 rounded-xl border border-blue-50 shadow-sm">
-                                    <span className="text-red-500 block text-sm mb-1">-50</span> Error
-                                </div>
-                            </div>
-                            <p className="text-[9px] mt-4 text-orange-600 font-black tracking-tighter">🔥 BONUS: +150 por cada 3 aciertos seguidos</p>
-                        </div>
-                        
-                        <div className="max-w-xs mx-auto space-y-4">
-                            <input 
-                                type="text" 
-                                value={playerName}
-                                onChange={(e) => setPlayerName(e.target.value)}
-                                placeholder="Nombre y Apellidos..." 
-                                className="w-full p-5 border-2 border-slate-100 rounded-2xl focus:border-blue-900 outline-none transition-all text-center font-bold text-md bg-white shadow-sm"
-                            />
-                            <button onClick={startGame} className="w-full bg-blue-900 text-white font-black py-5 rounded-2xl shadow-xl shadow-blue-100 hover:bg-blue-800 active:scale-95 transition-all text-sm uppercase tracking-widest">
-                                Comenzar Evaluación
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* PANTALLA DE JUEGO */}
-                {gameState === 'playing' && (
-                    <div className="p-8">
-                        <div className="flex justify-between items-center mb-10">
-                            <div className="flex flex-col gap-1">
-                                <span className="bg-blue-900 text-white px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-block w-fit">
-                                    Pregunta {currentIndex + 1} de {shuffledQuestions.length}
-                                </span>
-                                {streak > 0 && (
-                                    <span className="text-orange-600 text-[10px] font-black animate-pulse">
-                                        RACHA ACTUAL: {streak} 🔥
-                                    </span>
-                                )}
-                            </div>
-                            <div className="flex flex-col items-end">
-                                <span className={`font-mono font-black text-lg ${timeLeft < 5 ? 'text-red-500' : 'text-slate-400'}`}>
-                                    {activeEffects.isFrozen ? "CONGELADO ❄️" : `${timeLeft}s`}
-                                </span>
-                                <div className="w-24 h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden">
-                                    <div className={`h-full transition-all duration-1000 ${timeLeft < 5 ? 'bg-red-500' : 'bg-blue-900'}`} style={{ width: `${(timeLeft / 20) * 100}%` }}></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <h3 className="text-xl font-black text-slate-800 mb-10 leading-tight">
-                            {shuffledQuestions[currentIndex]?.q}
-                        </h3>
-
-                        <div className="space-y-4 mb-10">
-                            {shuffledQuestions[currentIndex]?.shuffledOptions.map((text, idx) => {
-                                const isCorrect = text === shuffledQuestions[currentIndex].a;
-                                const isSelected = selectedChoice === text;
-                                let btnClass = "w-full text-left p-5 rounded-2xl border-2 transition-all flex items-start gap-4 text-sm font-bold ";
-                                
-                                if (selectedChoice === null) btnClass += "border-slate-50 hover:border-blue-900 hover:bg-blue-50 text-slate-600 shadow-sm";
-                                else if (isCorrect) btnClass += "border-emerald-500 bg-emerald-50 text-emerald-800";
-                                else if (isSelected) btnClass += "border-red-500 bg-red-50 text-red-800";
-                                else btnClass += "border-slate-50 opacity-30 shadow-none";
-
-                                return (
-                                    <button key={idx} disabled={selectedChoice !== null} onClick={() => handleAnswer(text)} className={btnClass}>
-                                        <div className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black ${isSelected ? 'bg-blue-900 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                                            {String.fromCharCode(65 + idx)}
-                                        </div>
-                                        <span className="leading-snug">{text}</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        {/* COMODINES */}
-                        <div className="grid grid-cols-3 gap-4 border-t border-slate-100 pt-8">
-                            <button onClick={() => usePowerUp('double')} disabled={powerUps.double || selectedChoice !== null} className={`flex flex-col items-center p-3 rounded-2xl border-2 transition-all ${powerUps.double ? 'opacity-10 grayscale' : 'border-blue-50 hover:bg-blue-50 hover:border-blue-100'}`}>
-                                <span className="text-xl">🚀</span>
-                                <span className="text-[8px] font-black uppercase mt-1 text-blue-900">Doble</span>
-                            </button>
-                            <button onClick={() => usePowerUp('freeze')} disabled={powerUps.freeze || selectedChoice !== null} className={`flex flex-col items-center p-3 rounded-2xl border-2 transition-all ${powerUps.freeze ? 'opacity-10 grayscale' : 'border-blue-50 hover:bg-blue-50 hover:border-blue-100'}`}>
-                                <span className="text-xl">❄️</span>
-                                <span className="text-[8px] font-black uppercase mt-1 text-blue-900">Parar</span>
-                            </button>
-                            <button onClick={() => usePowerUp('skip')} disabled={powerUps.skip || selectedChoice !== null} className={`flex flex-col items-center p-3 rounded-2xl border-2 transition-all ${powerUps.skip ? 'opacity-10 grayscale' : 'border-blue-50 hover:bg-blue-50 hover:border-blue-100'}`}>
-                                <span className="text-xl">🔄</span>
-                                <span className="text-[8px] font-black uppercase mt-1 text-blue-900">Saltar</span>
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* RESULTADOS FINALES */}
-                {gameState === 'results' && (
-                    <div className="p-10 text-center animate-in zoom-in duration-300">
-                        <div className="text-5xl mb-4">🏆</div>
-                        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Evaluación Finalizada</h2>
-                        <p className="text-slate-400 font-bold uppercase text-[9px] tracking-widest border-b border-slate-100 pb-4 mb-8">Alumno: {playerName}</p>
-                        
-                        <div className="space-y-4 mb-10">
-                            <div className="bg-blue-900 text-white p-8 rounded-[2rem] shadow-2xl shadow-blue-100">
-                                <p className="text-[9px] font-black text-blue-300 uppercase tracking-widest mb-1">Puntuación Alcanzada</p>
-                                <p className="text-5xl font-black">{score}</p>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100">
-                                    <p className="text-[9px] font-black text-emerald-400 uppercase mb-1">Efectividad</p>
-                                    <p className="text-2xl font-black text-emerald-700">{Math.round((hits/rawQuestions.length)*100)}%</p>
-                                </div>
-                                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200">
-                                    <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Aciertos</p>
-                                    <p className="text-2xl font-black text-slate-700">{hits}</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <button onClick={() => window.location.reload()} className="w-full bg-slate-900 text-white font-black py-5 rounded-2xl hover:bg-black transition-all shadow-xl uppercase text-xs tracking-[0.2em]">
-                            Volver a Intentarlo
-                        </button>
                     </div>
                 )}
             </div>
